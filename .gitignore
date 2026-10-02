@@ -8,7 +8,6 @@ _site/
 # Generated on every run
 oi_raw_*.txt
 charts/
-artifact/
 dashboard_*.html
 !dashboard_template.html
 

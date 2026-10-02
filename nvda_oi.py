@@ -32,7 +32,6 @@ HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE / "data"
 CHART_DIR = HERE / "charts"
 DASHBOARD_TEMPLATE = HERE / "dashboard_template.html"
-ARTIFACT_DIR = HERE / "artifact"
 
 SERIES_URL = "https://marketdata.theocc.com/series-search?symbolType=U&symbol={symbol}"
 OI_DATE_URL = "https://marketdata.theocc.com/mdapi/open-interest?report_date={date:%m/%d/%Y}"
@@ -489,13 +488,10 @@ def save_dashboard(symbol, asof_line, now, all_rows, others, warning, path: Path
     blob = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
     content = (DASHBOARD_TEMPLATE.read_text()
                .replace("__OI_SYMBOL__", symbol).replace("__OI_DATA__", blob))
-    # The template is page content only. Locally it needs a document around it;
-    # the copy in artifact/ stays bare because the claude.ai Artifact host adds its own.
+    # The template is page content only; wrap it in a document.
     path.write_text('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
                     '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
                     f"</head>\n<body>\n{content}</body>\n</html>\n")
-    ARTIFACT_DIR.mkdir(exist_ok=True)
-    (ARTIFACT_DIR / f"{symbol.lower()}_open_interest.html").write_text(content)
 
 
 # --------------------------------------------------------------------------- #
