@@ -63,14 +63,17 @@ nearest expiration that has not passed. The layout lives in
 `dashboard_template.html`; edit that, not the generated file. Reload the page
 after a data pull to see the new day.
 
-### On a phone
+### On a phone, or anywhere
 
-A file on this Mac is not reachable from a phone, so the same page is also
-published as a private claude.ai Artifact, which opens in the Claude app.
+https://kshu1991.github.io/nvda-open-interest/ is the same page, hosted by
+GitHub Pages. GitHub Actions (`.github/workflows/daily.yml`) runs the pull on
+GitHub's servers on weekdays at 8:30 and 9:20 Eastern, commits the day's CSV to
+`data/`, and republishes the page. It does not depend on this Mac. GitHub's
+scheduler can start several minutes late, and the times are listed twice in the
+workflow (UTC for summer and winter), so an extra run an hour later is normal.
 
-Each run writes the publishable copy to `artifact/nvda_open_interest.html`,
-but only a Claude session can publish it; the launchd job cannot. Until it is
-republished the phone page shows the day named in its header.
+To run it on demand: the repository's Actions tab, "Daily open interest",
+"Run workflow".
 
 ## Where the numbers come from
 

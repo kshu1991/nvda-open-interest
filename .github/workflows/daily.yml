@@ -28,7 +28,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Pull open interest from the OCC
         id: pull
@@ -53,14 +53,14 @@ jobs:
         if: steps.pull.outputs.code == '0'
         run: mkdir -p _site && cp dashboard_NVDA.html _site/index.html
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         if: steps.pull.outputs.code == '0'
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         if: steps.pull.outputs.code == '0'
         with:
           path: _site
 
       - id: deploy
         if: steps.pull.outputs.code == '0'
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
