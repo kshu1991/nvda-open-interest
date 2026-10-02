@@ -1,0 +1,66 @@
+name: Daily open interest
+
+on:
+  schedule:
+    # GitHub cron is UTC. 8:30 and 9:20 Eastern are 12:30 / 13:20 UTC in summer and
+    # 13:30 / 14:20 UTC in winter, so both sets are listed. The extra run is
+    # harmless: it finds the same data and changes nothing.
+    - cron: "30 12,13 * * 1-5"
+    - cron: "20 13,14 * * 1-5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["nvda_oi.py", "dashboard_template.html", ".github/workflows/daily.yml"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-open-interest
+  cancel-in-progress: false
+
+jobs:
+  pull-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Pull open interest from the OCC
+        id: pull
+        run: |
+          set +e
+          python3 nvda_oi.py --csv --force --no-chart
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 75 means the OCC has not published yet; a later run picks it up.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+
+      - name: Save the day's CSV to the repository
+        if: steps.pull.outputs.code == '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/*_oi_*.csv
+          git diff --cached --quiet || git commit -m "Add open interest data"
+          git push
+
+      - name: Build the site
+        if: steps.pull.outputs.code == '0'
+        run: mkdir -p _site && cp dashboard_NVDA.html _site/index.html
+
+      - uses: actions/configure-pages@v5
+        if: steps.pull.outputs.code == '0'
+
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.pull.outputs.code == '0'
+        with:
+          path: _site
+
+      - id: deploy
+        if: steps.pull.outputs.code == '0'
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+logs/
+_site/
+.tools/
+.DS_Store
+
+# Generated on every run
+oi_raw_*.txt
+charts/
+artifact/
+dashboard_*.html
+!dashboard_template.html
+
+# Local-only measurement logs
+data/availability_log.csv
+data/probe_log.csv

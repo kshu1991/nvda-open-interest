@@ -1,0 +1,2 @@
+# Only needed for the bar chart; everything else is Python standard library (3.9+).
+matplotlib>=3.7
