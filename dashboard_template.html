@@ -59,6 +59,13 @@
   main { max-width: 1040px; margin: 0 auto; }
   h1 { font-size: 26px; margin: 0 0 4px; }
   h2 { font-size: 20px; margin: 0 0 4px; }
+  .pages { display: flex; gap: 6px; margin: 0 0 14px; }
+  .pages a {
+    padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px;
+    font-size: 13px; color: var(--ink-2); text-decoration: none;
+  }
+  .pages a[href]:hover { background: var(--wash); color: var(--ink); }
+  .pages a[aria-current] { background: var(--wash); color: var(--ink); font-weight: 650; }
   .meta, .showing { color: var(--ink-2); margin: 0; }
   .showing strong { color: var(--ink-2); font-weight: 650; }
   .warning {
@@ -81,7 +88,8 @@
   .stats td { text-align: right; }
   .stats th, .stats td { padding: 10px 6px; border-bottom: 1px solid var(--grid); }
 
-  .legend { display: flex; gap: 16px; margin: 12px 0 6px; font-size: 13px; color: var(--ink-2); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 6px; font-size: 13px; color: var(--ink-2); }
+  .legend .hint { margin-left: auto; color: var(--muted); }
   .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   .plot { position: relative; margin-top: 4px; }
   .gridlines, .axis { position: absolute; left: var(--label-w); right: var(--value-w); }
@@ -90,6 +98,7 @@
   .row {
     position: relative; display: grid; grid-template-columns: var(--label-w) 1fr;
     align-items: center; height: 28px; border-radius: 6px; outline: none;
+    color: inherit; text-decoration: none;
   }
   .row:hover, .row:focus-visible { background: var(--wash); }
   .row:hover .bar, .row:focus-visible .bar { filter: brightness(1.12); }
@@ -147,9 +156,14 @@
     .filters { gap: 12px; }
     .filters label { flex: 1 1 130px; }
     select { width: 100%; }
+    .legend .hint { margin-left: 0; flex-basis: 100%; }
   }
 </style>
 <main>
+  <nav class="pages" aria-label="Pages">
+    <a aria-current="page">Latest</a>
+    <a id="history-link">History</a>
+  </nav>
   <h1 id="title">__OI_SYMBOL__ Open Interest</h1>
   <p class="meta" id="meta"></p>
   <p class="warning" id="warning" hidden></p>
@@ -182,6 +196,7 @@
     <div class="legend">
       <span><i class="swatch" style="background:var(--call)"></i>Calls</span>
       <span><i class="swatch" style="background:var(--put)"></i>Puts</span>
+      <span class="hint">Select an option to see its history</span>
     </div>
     <div class="plot" id="plot"></div>
     <div class="axis-band"><div class="axis" id="axis"></div><span class="axis-title">Open interest</span></div>
@@ -208,7 +223,13 @@
 (function () {
   "use strict";
   var D = JSON.parse(document.getElementById("data").textContent);
-  var rows = D.rows.map(function (r) { return { expiry: r[0], strike: r[1], side: r[2], oi: r[3] }; });
+  var listed = D.rows.map(function (r) { return { expiry: r[0], strike: r[1], side: r[2], oi: r[3] }; });
+  // An expiration before today (Eastern date) has passed and its options are gone, so it is
+  // left out of the picker, the totals and the rankings. A page so old that every
+  // expiration has passed still shows what it has.
+  var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  var rows = listed.filter(function (r) { return r.expiry >= today; });
+  if (!rows.length) rows = listed;
   var $ = function (id) { return document.getElementById(id); };
   var fmt = function (n) { return n.toLocaleString("en-US"); };
   var ratio = function (calls, puts) { return calls ? (puts / calls).toFixed(2) : "n/a"; };
@@ -230,6 +251,9 @@
   var grand = expiries.reduce(function (a, e) {
     return { call: a.call + byExpiry[e].call, put: a.put + byExpiry[e].put };
   }, { call: 0, put: 0 });
+  var expired = {};
+  listed.forEach(function (r) { if (!byExpiry[r.expiry]) expired[r.expiry] = true; });
+  expired = Object.keys(expired).sort();
 
   function weekday(iso) {
     return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
@@ -239,19 +263,24 @@
     var strike = r.strike.indexOf(".") < 0 ? r.strike + ".0" : r.strike;
     return D.symbol + " " + p[1] + "/" + p[2] + "/" + p[0].slice(2) + " " + strike + (r.side === "call" ? "C" : "P");
   }
+  // The history page, opened on an expiration ("all" for every one) and optionally one option.
+  function historyHref(expiry, r) {
+    return D.historyPage + "#expiry=" + expiry +
+      (r ? "&option=" + r.strike + (r.side === "call" ? "C" : "P") : "");
+  }
 
-  // Default to the first expiration that has not passed yet (Eastern date).
-  var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  var state = {
-    expiry: expiries.filter(function (e) { return e >= today; })[0] || expiries[0],
-    side: "both",
-    top: 20
-  };
+  // Open on the expiration in the link (#expiry=2026-10-09 or #expiry=all, as the history
+  // page links here), else the nearest remaining one.
+  var state = { expiry: expiries[0], side: "both", top: 20 };
+  var linked = new URLSearchParams(location.hash.slice(1)).get("expiry");
+  if (linked === "all" || byExpiry[linked]) state.expiry = linked;
+  var ready = false;
 
   $("meta").textContent = "Data as of " + D.asofText + " · retrieved " + D.retrieved;
   if (D.warning) { $("warning").hidden = false; $("warning").textContent = D.warning; }
   $("footer").textContent = "Source: OCC series-search. Standard listed options only" +
-    (D.excluded ? "; excludes " + D.excluded + "." : ".");
+    (D.excluded ? "; excludes " + D.excluded + "." : ".") +
+    (expired.length ? " Not shown, already expired: " + expired.join(", ") + "." : "");
 
   var expirySelect = $("expiry");
   expiries.forEach(function (e) {
@@ -349,9 +378,9 @@
       axis.appendChild(tick);
     }
     ranked.forEach(function (r, i) {
-      var row = el("div", "row");
-      row.tabIndex = 0;
-      row.setAttribute("aria-label", contractName(r) + ", open interest " + fmt(r.oi));
+      var row = el("a", "row");
+      row.href = historyHref(r.expiry, r);
+      row.setAttribute("aria-label", contractName(r) + ", open interest " + fmt(r.oi) + ", see its history");
       row.appendChild(el("div", "name", contractName(r)));
       var track = el("div", "track");
       var bar = el("div", "bar " + r.side);
@@ -397,6 +426,10 @@
 
   function render() {
     expirySelect.value = state.expiry;
+    $("history-link").href = historyHref(state.expiry);
+    if (ready && location.hash !== "#expiry=" + state.expiry) {
+      try { history.replaceState(null, "", "#expiry=" + state.expiry); } catch (e) { /* some browsers refuse on file:// */ }
+    }
     hideTip();
     renderStats();
     renderRanking();
@@ -407,5 +440,6 @@
   $("side").addEventListener("change", function (ev) { state.side = ev.target.value; render(); });
   $("top").addEventListener("change", function (ev) { state.top = +ev.target.value; render(); });
   render();
+  ready = true;
 })();
 </script>

@@ -32,6 +32,7 @@ HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE / "data"
 CHART_DIR = HERE / "charts"
 DASHBOARD_TEMPLATE = HERE / "dashboard_template.html"
+HISTORY_TEMPLATE = HERE / "history_template.html"
 
 SERIES_URL = "https://marketdata.theocc.com/series-search?symbolType=U&symbol={symbol}"
 OI_DATE_URL = "https://marketdata.theocc.com/mdapi/open-interest?report_date={date:%m/%d/%Y}"
@@ -292,17 +293,66 @@ def write_csv_rows(path: Path, rows) -> None:
     tmp.replace(path)
 
 
-def latest_saved_before(symbol: str, asof: dt.date):
-    """(date, path) of the newest saved CSV dated before `asof`, or None."""
-    best = None
+def saved_days(symbol: str) -> dict[dt.date, Path]:
+    """Every saved dated CSV for `symbol`, keyed by its as-of date."""
+    days = {}
     for path in DATA_DIR.glob(f"{symbol}_oi_????????.csv"):
         try:
-            day = dt.datetime.strptime(path.stem[-8:], "%Y%m%d").date()
+            days[dt.datetime.strptime(path.stem[-8:], "%Y%m%d").date()] = path
         except ValueError:
             continue
-        if day < asof and (best is None or day > best[0]):
-            best = (day, path)
-    return best
+    return days
+
+
+def latest_saved_before(symbol: str, asof: dt.date):
+    """(date, path) of the newest saved CSV dated before `asof`, or None."""
+    earlier = {day: path for day, path in saved_days(symbol).items() if day < asof}
+    if not earlier:
+        return None
+    day = max(earlier)
+    return day, earlier[day]
+
+
+def load_history(symbol: str, asof: dt.date, rows):
+    """(day, rows) for every saved day in date order; this pull's rows stand in for `asof`,
+    whether or not they get saved."""
+    days = saved_days(symbol)
+    days[asof] = None
+    for day in sorted(days):
+        yield day, rows if day == asof else read_csv_rows(days[day])
+
+
+def history_series(days, cutoff: dt.date):
+    """Open interest per option per day, for the expirations on or after `cutoff`.
+
+    Returns (dates, expiries). `dates` are the ISO days that hold any of those options.
+    Each expiry is [expiry, first, options]: `first` indexes `dates`, and each option is
+    [strike, side, values] where values[i] is its open interest on dates[first + i], or
+    None on a day it was not listed (yet). Trailing missing days are left off.
+    """
+    cutoff = cutoff.isoformat()
+    dates, seen = [], {}  # (expiry, strike, side) -> [first date index, values from there]
+    for day, rows in days:
+        live = [row for row in rows if row[0] >= cutoff]
+        if not live:
+            continue
+        i = len(dates)
+        dates.append(day.isoformat())
+        for expiry, strike, side, oi in live:
+            first, values = seen.setdefault((expiry, strike, side), [i, []])
+            values.extend([None] * (i - first - len(values)))
+            values.append(oi)
+
+    by_expiry = defaultdict(list)
+    for (expiry, strike, side), (first, values) in seen.items():
+        by_expiry[expiry].append((strike, side, first, values))
+    expiries = []
+    for expiry in sorted(by_expiry):
+        options = sorted(by_expiry[expiry], key=lambda o: (float(o[0]), o[1]))
+        start = min(first for _, _, first, _ in options)
+        expiries.append([expiry, start, [[strike, side, [None] * (first - start) + values]
+                                         for strike, side, first, values in options]])
+    return dates, expiries
 
 
 def log_first_seen(symbol: str, asof: dt.date, now: dt.datetime) -> None:
@@ -474,24 +524,49 @@ def save_chart(symbol, asof_text, view_rows, expiry, top, path: Path) -> None:
     plt.close(fig)
 
 
+def page_path(kind: str, symbol: str) -> Path:
+    """The generated web pages, side by side so they can link to each other by name."""
+    return HERE / f"{kind}_{symbol}.html"
+
+
+def write_page(template: Path, symbol: str, payload: dict, path: Path) -> None:
+    """Fill a page template with its data and write it as a self-contained file."""
+    blob = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+    content = (template.read_text(encoding="utf-8")
+               .replace("__OI_SYMBOL__", symbol).replace("__OI_DATA__", blob))
+    # The template is page content only; wrap it in a document.
+    path.write_text('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+                    '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+                    f"</head>\n<body>\n{content}</body>\n</html>\n", encoding="utf-8")
+
+
 def save_dashboard(symbol, asof_line, now, all_rows, others, warning, path: Path) -> None:
     """Write the interactive page: the template with the whole chain embedded."""
-    payload = {
+    write_page(DASHBOARD_TEMPLATE, symbol, {
         "symbol": symbol,
         "asofText": asof_line,
         "retrieved": f"{now:%a %Y-%m-%d %H:%M} ET",
         "warning": warning,
         "excluded": (f"{len(others):,} FLEX/adjusted series holding "
                      f"{sum(s.call_oi + s.put_oi for s in others):,} contracts") if others else "",
+        "historyPage": page_path("history", symbol).name,
         "rows": all_rows,
-    }
-    blob = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
-    content = (DASHBOARD_TEMPLATE.read_text()
-               .replace("__OI_SYMBOL__", symbol).replace("__OI_DATA__", blob))
-    # The template is page content only; wrap it in a document.
-    path.write_text('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
-                    '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-                    f"</head>\n<body>\n{content}</body>\n</html>\n")
+    }, path)
+
+
+def save_history(symbol, now, asof, all_rows, warning, path: Path) -> int:
+    """Write the history page: each option's open interest on every saved day, for the
+    expirations that have not passed. Returns the number of days on it."""
+    dates, expiries = history_series(load_history(symbol, asof, all_rows), now.date())
+    write_page(HISTORY_TEMPLATE, symbol, {
+        "symbol": symbol,
+        "retrieved": f"{now:%a %Y-%m-%d %H:%M} ET",
+        "warning": warning,
+        "latestPage": page_path("dashboard", symbol).name,
+        "dates": dates,
+        "expiries": expiries,
+    }, path)
+    return len(dates)
 
 
 # --------------------------------------------------------------------------- #
@@ -621,17 +696,23 @@ def run(args) -> int:
         except ImportError:
             print("  Chart skipped: matplotlib is not installed "
                   "(pip install -r requirements.txt).", file=sys.stderr)
-    page = HERE / f"dashboard_{symbol}.html"
     warning = ""
     if problems:
         warning = "Sanity checks failed: " + "; ".join(problems)
     elif asof < expected:
         warning = f"Stale: the OCC has not published {expected:%a %Y-%m-%d} yet."
+    page = page_path("dashboard", symbol)
     try:
         save_dashboard(symbol, asof_line.split("  **")[0], now, all_rows, others, warning, page)
         print(f"  Page:  {rel(page)}")
     except FileNotFoundError:
         print(f"  Page skipped: {DASHBOARD_TEMPLATE.name} is missing.", file=sys.stderr)
+    page = page_path("history", symbol)
+    try:
+        days = save_history(symbol, now, asof, all_rows, warning, page)
+        print(f"  Page:  {rel(page)} ({days} trading day{'s' * (days != 1)} of history)")
+    except FileNotFoundError:
+        print(f"  Page skipped: {HISTORY_TEMPLATE.name} is missing.", file=sys.stderr)
 
     if args.csv:
         target = dated_csv if args.csv == "auto" else Path(args.csv).expanduser()

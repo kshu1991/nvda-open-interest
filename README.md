@@ -39,37 +39,60 @@ is standard library.
 Exit codes: `0` ok, `1` error, `75` the OCC has not published yet (try later).
 
 Outputs: the report on stdout (stats, "highest open interest" ranking, and a
-per-expiration table), the web page `dashboard_SYMBOL.html`, the same stats
-and ranking as a chart in `charts/SYMBOL_oi_YYYYMMDD_expYYYYMMDD.png` (`_all`
-for the whole chain), the raw response in `oi_raw_SYMBOL.txt`, and with `--csv`
-the dated file in `data/`.
+per-expiration table), the web pages `dashboard_SYMBOL.html` and
+`history_SYMBOL.html`, the same stats and ranking as a chart in
+`charts/SYMBOL_oi_YYYYMMDD_expYYYYMMDD.png` (`_all` for the whole chain), the
+raw response in `oi_raw_SYMBOL.txt`, and with `--csv` the dated file in `data/`.
 The CSV always holds the whole chain, whatever `--expiry` is, so history stays
 complete. The OCC serves only the current snapshot, so a day that is not saved
 cannot be fetched later.
 
-## The web page
+## The web pages
 
-Every run rewrites `dashboard_NVDA.html`, a single self-contained file with the
-whole chain embedded (no server, no network needed to view it):
+Every run rewrites two pages, each a single self-contained file with its data
+embedded (no server, no network needed to view them). A Latest / History
+switch at the top of each goes to the other.
 
 ```bash
-open dashboard_NVDA.html
+open dashboard_NVDA.html   # the latest day
+open history_NVDA.html     # every saved day
 ```
 
-It shows the Open Interest Stats table and the Highest Open Interest Options
-ranking, with pickers for expiration (or all expirations), calls/puts, and how
-many contracts to show, plus a table of every expiration. It opens on the
-nearest expiration that has not passed. The layout lives in
-`dashboard_template.html`; edit that, not the generated file. Reload the page
-after a data pull to see the new day.
+`dashboard_NVDA.html` shows the Open Interest Stats table and the Highest Open
+Interest Options ranking, with pickers for expiration (or all expirations),
+calls/puts, and how many contracts to show, plus a table of every expiration.
+It opens on the nearest expiration. Expirations that have passed are left out
+of the picker, the tables and the totals, since those options no longer
+exist. The page checks this against the date it is viewed, so a page made on
+Friday and opened on Monday drops Friday's expiration too. Select an option in
+the ranking to open its history.
+
+`history_NVDA.html` tracks the Highest Open Interest Options from day to day.
+Pick an expiration, calls/puts, and how many to show: each top option gets one
+column per saved day and the change from the day before. Select an option, or
+any strike from the Option menu, to chart its open interest day by day, with
+the change from the previous day and from the first saved day, and where it
+ranked among that expiration's calls (or puts) each day. The address keeps the
+selection, so `history_NVDA.html#expiry=2026-10-09&option=240C` opens on the
+240 call expiring 10/09/26.
+
+The history comes from every CSV in `data/` plus the latest pull, so it starts
+on the first saved day (2026-10-01) and grows by one column each trading day.
+An expiration drops off once it has passed; its CSV rows stay in `data/`.
+
+The layouts live in `dashboard_template.html` and `history_template.html`;
+edit those, not the generated files. Reload a page after a data pull to see
+the new day.
 
 ### On a phone, or anywhere
 
-https://kshu1991.github.io/nvda-open-interest/ is the same page, hosted by
-GitHub Pages. GitHub Actions (`.github/workflows/daily.yml`) runs the pull on
-GitHub's servers every 15 minutes on weekday mornings (about 8:00 to 10:00
-Eastern). The first run that finds a new day commits its CSV to `data/` and
-republishes the page; the rest change nothing. It does not depend on this Mac.
+https://kshu1991.github.io/nvda-open-interest/ is the same dashboard, hosted
+by GitHub Pages, and
+https://kshu1991.github.io/nvda-open-interest/history_NVDA.html the history.
+GitHub Actions (`.github/workflows/daily.yml`) runs the pull on GitHub's
+servers every 15 minutes on weekday mornings (about 8:00 to 10:00 Eastern).
+The first run that finds a new day commits its CSV to `data/` and republishes
+both pages; the rest change nothing. It does not depend on this Mac.
 GitHub starts scheduled runs late at busy times and occasionally skips one,
 which is why it tries repeatedly instead of at one exact time.
 
