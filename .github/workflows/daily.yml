@@ -2,31 +2,28 @@ name: Daily open interest
 
 on:
   schedule:
-    # GitHub cron is UTC. 8:30 and 9:20 Eastern are 12:30 / 13:20 UTC in summer and
-    # 13:30 / 14:20 UTC in winter, so both sets are listed. The extra run is
-    # harmless: it finds the same data and changes nothing.
-    - cron: "30 12,13 * * 1-5"
-    - cron: "20 13,14 * * 1-5"
+    # GitHub starts scheduled runs late at busy times (often 30-60 minutes) and
+    # sometimes skips them, so rather than two exact times this tries every 15
+    # minutes, off the busy :00/:30 marks, from 12:07 to 14:52 UTC: about
+    # 8:07-10:52 Eastern in summer, 7:07-9:52 in winter. Once the day's data is
+    # saved, later runs find nothing new and stop without republishing.
+    - cron: "7,22,37,52 12-14 * * 1-5"
   workflow_dispatch:
   push:
     branches: [main]
     paths: ["nvda_oi.py", "dashboard_template.html", ".github/workflows/daily.yml"]
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: daily-open-interest
   cancel-in-progress: false
 
 jobs:
-  pull-and-publish:
+  pull:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: write
+    outputs:
+      publish: ${{ steps.pull.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
 
@@ -36,31 +33,49 @@ jobs:
           set +e
           python3 nvda_oi.py --csv --force --no-chart
           code=$?
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          # 75 means the OCC has not published yet; a later run picks it up.
-          if [ "$code" -ne 0 ] && [ "$code" -ne 75 ]; then exit "$code"; fi
+          set -e
+          if [ "$code" -eq 75 ]; then
+            echo "The OCC has not published yet; a later run will pick it up."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$code" -eq 0 ] || exit "$code"
+          git add data/*_oi_*.csv
+          if git diff --cached --quiet && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Nothing new since the last run; the page stays as it is."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Save the day's CSV to the repository
-        if: steps.pull.outputs.code == '0'
+        if: steps.pull.outputs.publish == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/*_oi_*.csv
           git diff --cached --quiet || git commit -m "Add open interest data"
           git push
 
       - name: Build the site
-        if: steps.pull.outputs.code == '0'
+        if: steps.pull.outputs.publish == 'true'
         run: mkdir -p _site && cp dashboard_NVDA.html _site/index.html
 
-      - uses: actions/configure-pages@v6
-        if: steps.pull.outputs.code == '0'
-
       - uses: actions/upload-pages-artifact@v5
-        if: steps.pull.outputs.code == '0'
+        if: steps.pull.outputs.publish == 'true'
         with:
           path: _site
 
+  deploy:
+    needs: pull
+    if: needs.pull.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
       - id: deploy
-        if: steps.pull.outputs.code == '0'
         uses: actions/deploy-pages@v5

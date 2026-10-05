@@ -67,10 +67,11 @@ after a data pull to see the new day.
 
 https://kshu1991.github.io/nvda-open-interest/ is the same page, hosted by
 GitHub Pages. GitHub Actions (`.github/workflows/daily.yml`) runs the pull on
-GitHub's servers on weekdays at 8:30 and 9:20 Eastern, commits the day's CSV to
-`data/`, and republishes the page. It does not depend on this Mac. GitHub's
-scheduler can start several minutes late, and the times are listed twice in the
-workflow (UTC for summer and winter), so an extra run an hour later is normal.
+GitHub's servers every 15 minutes on weekday mornings (about 8:00 to 10:00
+Eastern). The first run that finds a new day commits its CSV to `data/` and
+republishes the page; the rest change nothing. It does not depend on this Mac.
+GitHub starts scheduled runs late at busy times and occasionally skips one,
+which is why it tries repeatedly instead of at one exact time.
 
 To run it on demand: the repository's Actions tab, "Daily open interest",
 "Run workflow".
