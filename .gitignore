@@ -10,6 +10,8 @@ oi_raw_*.txt
 charts/
 dashboard_*.html
 !dashboard_template.html
+history_*.html
+!history_template.html
 
 # Local-only measurement logs
 data/availability_log.csv

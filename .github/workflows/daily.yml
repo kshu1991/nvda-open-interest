@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["nvda_oi.py", "dashboard_template.html", ".github/workflows/daily.yml"]
+    paths: ["nvda_oi.py", "dashboard_template.html", "history_template.html", ".github/workflows/daily.yml"]
 
 concurrency:
   group: daily-open-interest
@@ -58,7 +58,11 @@ jobs:
 
       - name: Build the site
         if: steps.pull.outputs.publish == 'true'
-        run: mkdir -p _site && cp dashboard_NVDA.html _site/index.html
+        # The pages link to each other by file name, so each also goes up under its own.
+        run: |
+          mkdir -p _site
+          cp dashboard_NVDA.html _site/index.html
+          cp dashboard_NVDA.html history_NVDA.html _site/
 
       - uses: actions/upload-pages-artifact@v5
         if: steps.pull.outputs.publish == 'true'

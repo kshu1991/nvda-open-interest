@@ -1,0 +1,657 @@
+<title>__OI_SYMBOL__ Open Interest History</title>
+<!-- Page content only (no html/head/body): nvda_oi.py wraps it in a document. -->
+<style>
+  /* Layout: a filter row, the top options with one column per saved day, then the history of
+     one option as a chart and a table. Same tokens as dashboard_template.html. */
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --wash: rgba(11, 11, 11, 0.04);
+    --call: #2a78d6;
+    --put: #eb6834;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --wash: rgba(255, 255, 255, 0.05);
+      --call: #3987e5;
+      --put: #d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --wash: rgba(255, 255, 255, 0.05);
+      --call: #3987e5;
+      --put: #d95926;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding-inline: 16px;
+    padding-block: 24px 48px;
+    background: var(--page);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  .pages { display: flex; gap: 6px; margin: 0 0 14px; }
+  .pages a {
+    padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px;
+    font-size: 13px; color: var(--ink-2); text-decoration: none;
+  }
+  .pages a[href]:hover { background: var(--wash); color: var(--ink); }
+  .pages a[aria-current] { background: var(--wash); color: var(--ink); font-weight: 650; }
+  .meta, .showing { color: var(--ink-2); margin: 0; }
+  .showing strong { color: var(--ink-2); font-weight: 650; }
+  .warning {
+    margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--wash); font-weight: 600;
+  }
+  .filters { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; align-items: end; }
+  label.pick { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+  select {
+    font: inherit; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 120px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .empty { padding: 24px 0; color: var(--ink-2); }
+  .nil { color: var(--muted); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 12px 0 2px; font-size: 13px; color: var(--ink-2); }
+  .legend .hint { margin-left: auto; color: var(--muted); }
+  .key { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .key.call { background: var(--call); }
+  .key.put { background: var(--put); }
+
+  /* Top options, one column per saved day; the option column stays put while the days scroll. */
+  .days-table th, .days-table td {
+    padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid);
+  }
+  .days-table th { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+  .days-table .opt {
+    position: sticky; left: 0; z-index: 1; text-align: left;
+    background: var(--surface); border-right: 1px solid var(--grid);
+  }
+  .days-table .latest { font-weight: 650; }
+  .days-table th.latest { color: var(--ink); }
+  .days-table tbody tr { cursor: pointer; }
+  .days-table tbody tr:hover, .days-table tr.selected { background: var(--wash); }
+  .days-table tbody tr:hover .opt, .days-table tr.selected .opt {
+    background: linear-gradient(var(--wash), var(--wash)), var(--surface);
+  }
+  .days-table tr.selected td { font-weight: 650; }
+  .days-table button {
+    font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 3px;
+  }
+  .rank { display: inline-block; min-width: 2.2em; color: var(--muted); font-weight: 400; }
+
+  /* One option: header with its picker, stat tiles, chart, then the same days as a table. */
+  .option-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 14px 44px; margin: 18px 0 6px; }
+  .tile .label { font-size: 13px; color: var(--ink-2); }
+  .tile .value { font-size: 28px; font-weight: 650; line-height: 1.2; }
+  .tile .note { font-size: 13px; color: var(--ink-2); }
+  .chart { position: relative; margin: 10px 0 8px; border-radius: 6px; outline: none; touch-action: pan-y; }
+  .chart:focus-visible { box-shadow: 0 0 0 2px var(--axis); }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .grid { stroke: var(--grid); stroke-width: 1; }
+  .chart .base { stroke: var(--axis); stroke-width: 1; }
+  .chart .cross { stroke: var(--axis); stroke-width: 1; }
+  .chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .line.call { stroke: var(--call); }
+  .chart .line.put { stroke: var(--put); }
+  .chart .area { stroke: none; opacity: 0.1; }
+  .chart .area.call, .chart .dot.call { fill: var(--call); }
+  .chart .area.put, .chart .dot.put { fill: var(--put); }
+  .chart .dot { stroke: var(--surface); stroke-width: 2; }
+  .daily { margin-top: 6px; font-size: 14px; }
+  .daily th, .daily td { padding: 7px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+  .daily th { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: normal; vertical-align: bottom; }
+  .daily th:first-child, .daily td:first-child { text-align: left; }
+  footer { color: var(--muted); font-size: 12px; }
+
+  #tip {
+    position: fixed; z-index: 10; pointer-events: none; max-width: 260px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); padding: 8px 10px; font-size: 13px;
+  }
+  #tip b { display: block; font-size: 16px; }
+  #tip div { color: var(--ink-2); }
+
+  @media (max-width: 600px) {
+    .card { padding: 14px; }
+    .filters { gap: 12px; }
+    .filters label.pick { flex: 1 1 130px; }
+    select { width: 100%; }
+    .option-head label.pick { flex: 1 1 100%; }
+    .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .tile .value { font-size: 24px; }
+    .daily th, .daily td { padding-inline: 5px; }
+    .daily .rank-col { display: none; }  /* the chart's tooltip still gives it */
+    .legend .hint { margin-left: 0; flex-basis: 100%; }
+  }
+</style>
+<main>
+  <nav class="pages" aria-label="Pages">
+    <a id="latest-link">Latest</a>
+    <a aria-current="page">History</a>
+  </nav>
+  <h1>__OI_SYMBOL__ Open Interest History</h1>
+  <p class="meta" id="meta"></p>
+  <p class="warning" id="warning" hidden></p>
+
+  <div class="filters">
+    <label class="pick">Expiration <select id="expiry"></select></label>
+    <label class="pick">Type
+      <select id="side">
+        <option value="both">Calls &amp; puts</option>
+        <option value="call">Calls</option>
+        <option value="put">Puts</option>
+      </select>
+    </label>
+    <label class="pick">Show
+      <select id="top">
+        <option>10</option><option selected>20</option><option>30</option><option>50</option>
+      </select>
+    </label>
+  </div>
+
+  <section class="card">
+    <h2>Highest Open Interest Options</h2>
+    <p class="showing" id="showing-rank"></p>
+    <div class="legend">
+      <span><i class="key call"></i>Calls</span>
+      <span><i class="key put"></i>Puts</span>
+      <span class="hint">Open interest at each close. Select an option to chart it.</span>
+    </div>
+    <div class="scroll" id="rank-scroll">
+      <table class="days-table">
+        <thead id="rank-head"></thead>
+        <tbody id="rank-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="option-card" hidden>
+    <div class="option-head">
+      <div>
+        <h2 id="option-title"></h2>
+        <p class="showing" id="option-sub"></p>
+      </div>
+      <label class="pick">Option <select id="option"></select></label>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div class="chart" id="chart" tabindex="0" role="img"></div>
+    <div class="scroll">
+      <table class="daily">
+        <thead><tr><th>Date</th><th>Open interest</th><th>Change</th><th>Change %</th><th class="rank-col" id="rank-label">Rank</th></tr></thead>
+        <tbody id="daily"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+<div id="tip" role="status" hidden></div>
+
+<script id="data" type="application/json">__OI_DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("data").textContent);
+  var $ = function (id) { return document.getElementById(id); };
+  var fmt = function (n) { return n.toLocaleString("en-US"); };
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function svgEl(tag, attrs) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (var name in attrs) node.setAttribute(name, attrs[name]);
+    return node;
+  }
+
+  // Dates are ISO strings; D.dates holds every saved day, oldest first.
+  var multiYear = D.dates.length > 1 && D.dates[0].slice(0, 4) !== D.dates[D.dates.length - 1].slice(0, 4);
+  function weekday(iso) {
+    return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+  }
+  function longDay(iso) { return weekday(iso) + " " + iso; }
+  function shortDay(iso) {
+    var p = iso.split("-");
+    return weekday(iso) + " " + p[1] + "/" + p[2] + (multiYear ? "/" + p[0].slice(2) : "");
+  }
+  function signed(n) { return n > 0 ? "+" + fmt(n) : n < 0 ? "−" + fmt(-n) : "0"; }
+  function percent(now, before) {
+    if (!before) return "—";
+    var p = 100 * (now - before) / before;
+    var text = Math.abs(p) >= 100 ? fmt(Math.round(Math.abs(p))) : Math.abs(p).toFixed(1);
+    return (text === "0.0" ? "" : p > 0 ? "+" : "−") + text + "%";
+  }
+  var today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  function untilText(iso) {
+    var days = Math.round((Date.parse(iso) - Date.parse(today)) / 864e5);
+    return days === 0 ? "today" : days === 1 ? "tomorrow" : "in " + days + " days";
+  }
+
+  // Each option's values line up with D.dates from its expiration's first day; a missing or
+  // null value means the option was not listed that day.
+  var listed = D.expiries.map(function (x) {
+    var exp = { expiry: x[0], first: x[1], last: x[1], options: [] };
+    exp.options = x[2].map(function (o) {
+      exp.last = Math.max(exp.last, x[1] + o[2].length - 1);
+      return { expiry: x[0], strike: o[0], side: o[1], first: x[1], values: o[2] };
+    });
+    return exp;
+  });
+  // The page is built without expirations that had passed; drop any that have passed since.
+  var expiries = listed.filter(function (x) { return x.expiry >= today; });
+  if (!expiries.length) expiries = listed;
+  var byExpiry = {};
+  var everything = { expiry: "all", first: Infinity, last: -1, options: [] };
+  expiries.forEach(function (x) {
+    byExpiry[x.expiry] = x;
+    everything.first = Math.min(everything.first, x.first);
+    everything.last = Math.max(everything.last, x.last);
+    everything.options = everything.options.concat(x.options);
+  });
+
+  function oiAt(o, i) {
+    var v = o.values[i - o.first];
+    return v === undefined ? null : v;
+  }
+  function sideLetter(o) { return o.side === "call" ? "C" : "P"; }
+  function optionName(o) { return (o.strike.indexOf(".") < 0 ? o.strike + ".0" : o.strike) + sideLetter(o); }
+  function expiryShort(iso) { var p = iso.split("-"); return p[1] + "/" + p[2] + "/" + p[0].slice(2); }
+  function contractName(o) { return D.symbol + " " + expiryShort(o.expiry) + " " + optionName(o); }
+  function rankOn(o, i) {
+    var v = oiAt(o, i), rank = 1;
+    byExpiry[o.expiry].options.forEach(function (p) { if (p.side === o.side && oiAt(p, i) > v) rank++; });
+    return rank;
+  }
+
+  var state = { expiry: expiries.length ? expiries[0].expiry : "all", side: "both", top: 20, focus: null };
+  function scope() { return state.expiry === "all" ? everything : byExpiry[state.expiry]; }
+  function inScope(o) {
+    return (state.expiry === "all" || o.expiry === state.expiry) && (state.side === "both" || o.side === state.side);
+  }
+  // Highest open interest on the scope's latest day first.
+  function ranked(sc) {
+    return sc.options
+      .filter(function (o) { return (state.side === "both" || o.side === state.side) && oiAt(o, sc.last) > 0; })
+      .sort(function (a, b) { return oiAt(b, sc.last) - oiAt(a, sc.last); });
+  }
+
+  // #expiry=2026-10-09&option=240C, as the Latest page links here.
+  function readHash() {
+    var params = new URLSearchParams(location.hash.slice(1));
+    var expiry = params.get("expiry"), code = /^(\d+(?:\.\d+)?)([CP])$/i.exec(params.get("option") || "");
+    if (expiry === "all" || byExpiry[expiry]) state.expiry = expiry;
+    if (code && state.expiry !== "all") {
+      state.focus = byExpiry[state.expiry].options.filter(function (o) {
+        return parseFloat(o.strike) === parseFloat(code[1]) && sideLetter(o) === code[2].toUpperCase();
+      })[0] || null;
+    }
+    return !!state.focus;
+  }
+  // After the first render, the address keeps the selection so a reload or bookmark returns to it.
+  var ready = false;
+  function syncLinks() {
+    $("latest-link").href = D.latestPage + "#expiry=" + state.expiry;
+    var hash = "#expiry=" + state.expiry +
+      (state.focus && state.expiry !== "all" ? "&option=" + state.focus.strike + sideLetter(state.focus) : "");
+    if (ready && location.hash !== hash) {
+      try { history.replaceState(null, "", hash); } catch (e) { /* some browsers refuse on file:// */ }
+    }
+  }
+
+  var n = D.dates.length;
+  $("meta").textContent = (n > 1
+    ? "Open interest at each close from " + longDay(D.dates[0]) + " to " + longDay(D.dates[n - 1]) + " (" + n + " trading days)"
+    : n === 1 ? "Open interest at the " + longDay(D.dates[0]) + " close; each trading day adds a column"
+    : "No days saved yet") + " · retrieved " + D.retrieved;
+  if (D.warning) { $("warning").hidden = false; $("warning").textContent = D.warning; }
+  $("footer").textContent = "Source: OCC series-search, one snapshot saved per trading day. " +
+    "Standard listed options only. Expirations that have passed are not shown.";
+
+  var expirySelect = $("expiry");
+  expiries.forEach(function (x) {
+    var opt = el("option", "", x.expiry + " (" + weekday(x.expiry) + ")");
+    opt.value = x.expiry;
+    expirySelect.appendChild(opt);
+  });
+  var all = el("option", "", "All expirations");
+  all.value = "all";
+  expirySelect.appendChild(all);
+
+  // ---- Highest open interest options, day by day ----
+  var rankRows = [];
+  function renderRanking() {
+    var sc = scope(), list = ranked(sc).slice(0, state.top);
+    var head = $("rank-head"), body = $("rank-body"), showing = $("showing-rank");
+    head.textContent = "";
+    body.textContent = "";
+    rankRows = [];
+    showing.textContent = "Showing results for ";
+    showing.appendChild(el("strong", "", D.symbol + ", " +
+      (state.expiry === "all" ? "all expirations" : state.expiry + " expiration") + ", " +
+      (state.side === "both" ? "calls & puts" : state.side + "s")));
+    if (!list.length) {
+      showing.appendChild(document.createTextNode("."));
+      body.appendChild(el("tr")).appendChild(el("td", "empty", n ? "No open interest for this selection." : "No history saved yet."));
+      return;
+    }
+    showing.appendChild(document.createTextNode(", ranked by open interest on " + longDay(D.dates[sc.last])));
+
+    var tr = el("tr"), i;
+    tr.appendChild(el("th", "opt", "Option"));
+    for (i = sc.first; i <= sc.last; i++) {
+      var th = el("th", i === sc.last ? "latest" : "", shortDay(D.dates[i]));
+      th.title = longDay(D.dates[i]);
+      tr.appendChild(th);
+    }
+    var change = el("th", "", "Change");
+    if (sc.last > sc.first) change.title = "From " + longDay(D.dates[sc.last - 1]) + " to " + longDay(D.dates[sc.last]);
+    tr.appendChild(change);
+    head.appendChild(tr);
+
+    list.forEach(function (o, k) {
+      var row = el("tr"), cell = el("td", "opt"), button = el("button");
+      button.type = "button";
+      button.appendChild(el("span", "rank", String(k + 1)));
+      button.appendChild(el("i", "key " + o.side));
+      button.appendChild(document.createTextNode(
+        state.expiry === "all" ? expiryShort(o.expiry) + " " + optionName(o) : optionName(o)));
+      cell.appendChild(button);
+      row.appendChild(cell);
+      for (var j = sc.first; j <= sc.last; j++) {
+        var v = oiAt(o, j);
+        row.appendChild(el("td", (j === sc.last ? "latest" : "") + (v === null ? " nil" : ""), v === null ? "—" : fmt(v)));
+      }
+      var before = sc.last > sc.first ? oiAt(o, sc.last - 1) : null;
+      row.appendChild(before === null ? el("td", "nil", "—") : el("td", "", signed(oiAt(o, sc.last) - before)));
+      row.addEventListener("click", function () { focusOn(o, true); });
+      body.appendChild(row);
+      rankRows.push([row, o]);
+    });
+    markSelected();
+    // Newest days are at the right; start there.
+    $("rank-scroll").scrollLeft = $("rank-scroll").scrollWidth;
+  }
+  function markSelected() {
+    rankRows.forEach(function (pair) { pair[0].classList.toggle("selected", pair[1] === state.focus); });
+  }
+
+  // ---- One option ----
+  var optionSelect = $("option"), pickerExpiry = null;
+  function fillPicker(expiry) {
+    if (pickerExpiry === expiry) return;
+    pickerExpiry = expiry;
+    optionSelect.textContent = "";
+    byExpiry[expiry].options.forEach(function (o, k) {
+      var opt = el("option", "", optionName(o));
+      opt.value = k;
+      optionSelect.appendChild(opt);
+    });
+  }
+  function points(o) {
+    var pts = [];
+    for (var i = o.first; i < o.first + o.values.length; i++) {
+      if (oiAt(o, i) !== null) pts.push({ i: i, v: oiAt(o, i) });
+    }
+    return pts;
+  }
+  function tile(label, value, note) {
+    var box = el("div", "tile");
+    box.appendChild(el("div", "label", label));
+    box.appendChild(el("div", "value", value));
+    if (note) box.appendChild(el("div", "note", note));
+    $("tiles").appendChild(box);
+  }
+
+  function renderOption() {
+    var o = state.focus;
+    $("option-card").hidden = !o;
+    if (!o) return;
+    var pts = points(o), last = pts[pts.length - 1], prev = pts[pts.length - 2], first = pts[0];
+    var sideName = o.side === "call" ? "Call" : "Put";
+    $("option-title").textContent = contractName(o);
+    $("option-sub").textContent = sideName + " expiring " + longDay(o.expiry) + " (" + untilText(o.expiry) + ")";
+    fillPicker(o.expiry);
+    optionSelect.value = byExpiry[o.expiry].options.indexOf(o);
+
+    $("tiles").textContent = "";
+    tile("Open interest", fmt(last.v), "at the " + shortDay(D.dates[last.i]) + " close");
+    if (prev) tile("Change from " + shortDay(D.dates[prev.i]), signed(last.v - prev.v), percent(last.v, prev.v));
+    if (pts.length > 2) tile("Change from " + shortDay(D.dates[first.i]), signed(last.v - first.v), percent(last.v, first.v));
+    if (!prev) tile("Change", "—", "No earlier day saved yet");
+
+    renderChart(o, pts);
+
+    $("rank-label").textContent = "Rank among " + o.side + "s";
+    var body = $("daily");
+    body.textContent = "";
+    for (var k = pts.length - 1; k >= 0; k--) {
+      var p = pts[k], before = k ? pts[k - 1] : null, tr = el("tr");
+      [shortDay(D.dates[p.i]), fmt(p.v),
+       before ? signed(p.v - before.v) : "—",
+       before ? percent(p.v, before.v) : "—"].forEach(function (text) { tr.appendChild(el("td", "", text)); });
+      tr.appendChild(el("td", "rank-col", p.v > 0 ? String(rankOn(o, p.i)) : "—"));
+      body.appendChild(tr);
+    }
+  }
+
+  // Line chart of one option: x is each saved day (evenly spaced, like a trading calendar),
+  // y is open interest from zero. Hover, touch or arrow keys read a day in the tooltip.
+  var chart = null;
+  function niceStep(max, count) {
+    var raw = max / count, pow = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / pow;
+    return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * pow;
+  }
+  function tickText(v) {
+    if (v === 0) return "0";
+    return v >= 1e6 ? +(v / 1e6).toFixed(2) + "M" : v >= 1e3 ? +(v / 1e3).toFixed(1) + "K" : String(v);
+  }
+  function renderChart(o, pts) {
+    var box = $("chart");
+    box.textContent = "";
+    var W = box.clientWidth || 600, H = 240, m = { top: 14, right: 32, bottom: 30, left: 52 };
+    var pw = W - m.left - m.right, ph = H - m.top - m.bottom;
+    var i0 = pts[0].i, i1 = pts[pts.length - 1].i;
+    var max = Math.max.apply(null, pts.map(function (p) { return p.v; }));
+    var step = Math.max(1, niceStep(Math.max(max, 4), 4)), top = Math.max(step, Math.ceil(max / step) * step);
+    function x(i) { return m.left + (i1 === i0 ? pw / 2 : pw * (i - i0) / (i1 - i0)); }
+    function y(v) { return m.top + ph * (1 - v / top); }
+    var svg = box.appendChild(svgEl("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H }));
+    box.setAttribute("aria-label", "Open interest of " + contractName(o) + " by day, " +
+      fmt(pts[0].v) + " on " + longDay(D.dates[i0]) + " to " + fmt(pts[pts.length - 1].v) + " on " +
+      longDay(D.dates[i1]) + ". The table below lists every day.");
+
+    for (var t = 0; t <= top; t += step) {
+      svg.appendChild(svgEl("line", { "class": t ? "grid" : "base", x1: m.left, x2: W - m.right, y1: y(t), y2: y(t) }));
+      svg.appendChild(svgEl("text", { x: m.left - 8, y: y(t), dy: "0.32em", "text-anchor": "end" })).textContent = tickText(t);
+    }
+    // Label as many days as fit, always including the latest; measure one label for the spacing.
+    var probe = svg.appendChild(svgEl("text", {}));
+    probe.textContent = shortDay(D.dates[i1]);
+    var every = i1 === i0 ? 1 : Math.max(1, Math.ceil((probe.getComputedTextLength() + 16) * (i1 - i0) / pw));
+    svg.removeChild(probe);
+    for (var i = i1; i >= i0; i -= every) {
+      svg.appendChild(svgEl("text", { x: x(i), y: H - 8, "text-anchor": "middle" })).textContent = shortDay(D.dates[i]);
+    }
+    var cross = svg.appendChild(svgEl("line", { "class": "cross", y1: m.top, y2: m.top + ph, visibility: "hidden" }));
+
+    // Runs of consecutive days; a day the option was not listed breaks the line.
+    var runs = [], run = [];
+    pts.forEach(function (p, k) {
+      if (k && p.i !== pts[k - 1].i + 1) { runs.push(run); run = []; }
+      run.push(p);
+    });
+    runs.push(run);
+    runs.forEach(function (r) {
+      if (r.length < 2) return;
+      var line = r.map(function (p, k) { return (k ? "L" : "M") + x(p.i) + "," + y(p.v); }).join("");
+      svg.appendChild(svgEl("path", { "class": "area " + o.side,
+        d: line + "L" + x(r[r.length - 1].i) + "," + y(0) + "L" + x(r[0].i) + "," + y(0) + "Z" }));
+      svg.appendChild(svgEl("path", { "class": "line " + o.side, d: line }));
+    });
+    // Dots while they have room; the latest day always gets one.
+    var roomy = i1 === i0 || pw / (i1 - i0) >= 14;
+    pts.forEach(function (p, k) {
+      if (roomy || k === pts.length - 1) {
+        svg.appendChild(svgEl("circle", { "class": "dot " + o.side, cx: x(p.i), cy: y(p.v), r: 4 }));
+      }
+    });
+    var hot = svg.appendChild(svgEl("circle", { "class": "dot " + o.side, r: 5.5, visibility: "hidden" }));
+
+    chart = {
+      width: W,
+      count: pts.length,
+      active: -1,
+      nearest: function (clientX) {
+        var r = svg.getBoundingClientRect(), px = (clientX - r.left) * W / r.width, best = 0;
+        pts.forEach(function (p, k) { if (Math.abs(x(p.i) - px) < Math.abs(x(pts[best].i) - px)) best = k; });
+        return best;
+      },
+      show: function (k, clientX, clientY) {
+        var p = pts[k], before = pts[k - 1];
+        chart.active = k;
+        cross.setAttribute("x1", x(p.i));
+        cross.setAttribute("x2", x(p.i));
+        cross.setAttribute("visibility", "visible");
+        hot.setAttribute("cx", x(p.i));
+        hot.setAttribute("cy", y(p.v));
+        hot.setAttribute("visibility", "visible");
+        if (clientX === undefined) {
+          var r = svg.getBoundingClientRect();
+          clientX = r.left + x(p.i) * r.width / W;
+          clientY = r.top + y(p.v) * r.height / H;
+        }
+        var lines = [longDay(D.dates[p.i])];
+        if (before) lines.push(signed(p.v - before.v) + " (" + percent(p.v, before.v) + ") from " + shortDay(D.dates[before.i]));
+        if (p.v > 0) lines.push("#" + rankOn(o, p.i) + " among " + expiryShort(o.expiry) + " " + o.side + "s");
+        showTip(fmt(p.v), o.side, lines, clientX, clientY);
+      },
+      hide: function () {
+        chart.active = -1;
+        cross.setAttribute("visibility", "hidden");
+        hot.setAttribute("visibility", "hidden");
+        hideTip();
+      }
+    };
+  }
+
+  var tip = $("tip");
+  function showTip(value, side, lines, x, y) {
+    tip.textContent = "";
+    tip.appendChild(el("b", "", value));
+    lines.forEach(function (text, k) {
+      var row = el("div");
+      if (!k) row.appendChild(el("i", "key " + side));
+      row.appendChild(document.createTextNode(text));
+      tip.appendChild(row);
+    });
+    tip.hidden = false;
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.max(8, Math.min(x + 14, window.innerWidth - w - 8)) + "px";
+    tip.style.top = Math.max(8, Math.min(y + 14, window.innerHeight - h - 8)) + "px";
+  }
+  function hideTip() { tip.hidden = true; }
+
+  // A touch keeps its day showing until the next touch elsewhere. Keyboard focus starts on the
+  // latest day; a click focuses too, but shows the day it landed on.
+  var chartBox = $("chart"), pointerFocus = false, keyboardFocus = false;
+  function hideChart() { if (chart) chart.hide(); else hideTip(); }
+  chartBox.addEventListener("pointermove", function (ev) { if (chart) chart.show(chart.nearest(ev.clientX), ev.clientX, ev.clientY); });
+  chartBox.addEventListener("pointerdown", function (ev) {
+    pointerFocus = true;
+    if (chart) chart.show(chart.nearest(ev.clientX), ev.clientX, ev.clientY);
+  });
+  chartBox.addEventListener("pointerleave", function (ev) { if (ev.pointerType !== "touch") hideChart(); });
+  document.addEventListener("pointerdown", function (ev) { if (!chartBox.contains(ev.target)) hideChart(); });
+  chartBox.addEventListener("focus", function () {
+    keyboardFocus = !pointerFocus;
+    pointerFocus = false;
+    if (chart && keyboardFocus) chart.show(chart.count - 1);
+  });
+  chartBox.addEventListener("blur", function () { pointerFocus = keyboardFocus = false; hideChart(); });
+  chartBox.addEventListener("keydown", function (ev) {
+    if (!chart) return;
+    var k = { ArrowLeft: chart.active - 1, ArrowRight: chart.active + 1, Home: 0, End: chart.count - 1 }[ev.key];
+    if (k === undefined) return;
+    ev.preventDefault();
+    chart.show(Math.max(0, Math.min(chart.count - 1, k)));
+  });
+  // Scrolling moves the chart out from under the tooltip: follow it while the keyboard drives it.
+  window.addEventListener("scroll", function () {
+    if (keyboardFocus && chart && chart.active >= 0) chart.show(chart.active); else hideChart();
+  }, { passive: true });
+  window.addEventListener("resize", function () {
+    if (chart && state.focus && chartBox.clientWidth !== chart.width) renderChart(state.focus, points(state.focus));
+  });
+
+  function focusOn(o, scroll) {
+    state.focus = o;
+    hideTip();
+    markSelected();
+    renderOption();
+    syncLinks();
+    var card = $("option-card"), top = card.getBoundingClientRect().top;
+    if (scroll && (top < 0 || top > window.innerHeight / 2)) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function render() {
+    expirySelect.value = state.expiry;
+    var sc = scope();
+    if (!state.focus || !inScope(state.focus)) state.focus = ranked(sc)[0] || sc.options[0] || null;
+    hideTip();
+    renderRanking();
+    renderOption();
+    syncLinks();
+  }
+
+  expirySelect.addEventListener("change", function () { state.expiry = expirySelect.value; render(); });
+  $("side").addEventListener("change", function (ev) { state.side = ev.target.value; render(); });
+  $("top").addEventListener("change", function (ev) { state.top = +ev.target.value; render(); });
+  optionSelect.addEventListener("change", function () { focusOn(byExpiry[pickerExpiry].options[+optionSelect.value], false); });
+
+  var linked = readHash();
+  render();
+  ready = true;
+  if (linked) $("option-card").scrollIntoView();
+})();
+</script>
