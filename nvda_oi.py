@@ -635,17 +635,15 @@ def run(args) -> int:
               f"(latest available: {asof:%a %Y-%m-%d}). Try again later, or pass "
               f"--allow-stale to see the older data.")
         return EXIT_NOT_PUBLISHED
-    # After the close, series-search can switch to the day's new numbers while the report
-    # date still names the previous session (seen at 21:06 ET on 2026-10-08), so until the
-    # date reaches today the data cannot be dated and must not be saved under `asof`.
-    if after_close and asof < today and not args.allow_stale:
-        print(f"After the close, series-search may already hold {today:%a %Y-%m-%d} open "
-              f"interest while the OCC still dates its data {asof:%a %Y-%m-%d}. Try again "
-              f"once the OCC dates it, or tomorrow morning; pass --allow-stale to see it anyway.")
-        return EXIT_NOT_PUBLISHED
+    # After the close, series-search switches to the day's numbers hours before the OCC's
+    # report date moves on (by 21:06 ET on 2026-10-08 it held Thursday's while the date still
+    # said Wednesday). Until the date catches up, the content tells the day: unchanged from
+    # what was saved for the reported date means today's numbers aren't out yet; changed
+    # means they are today's.
+    evening = after_close and asof < today and not args.allow_stale
 
     dated_csv = csv_path_for(symbol, asof)
-    if args.if_new and verified and dated_csv.exists():
+    if args.if_new and verified and dated_csv.exists() and not evening:
         print(f"Nothing new: the latest OCC data is {asof:%a %Y-%m-%d} and "
               f"{rel(dated_csv)} already exists.")
         return EXIT_OK
@@ -659,6 +657,23 @@ def run(args) -> int:
         raise OCCError(f"no standard {symbol} option series in the OCC response")
     all_rows = to_long(standard)
 
+    reported = asof
+    if evening:
+        if dated_csv.exists():
+            if read_csv_rows(dated_csv) == all_rows:
+                print(f"{today:%a %Y-%m-%d} open interest isn't out yet: series-search still "
+                      f"holds the {reported:%a %Y-%m-%d} data. Try again later this evening.")
+                return EXIT_NOT_PUBLISHED
+            asof = today
+        elif not any(s.expiry == reported for s in standard):
+            print(f"After the close the OCC still dates its data {reported:%a %Y-%m-%d} and "
+                  f"{rel(dated_csv)} isn't saved, so series-search could hold either that day "
+                  f"or {today:%a %Y-%m-%d}. Saving nothing; try again once the OCC dates it.")
+            return EXIT_NOT_PUBLISHED
+        # Otherwise options expiring on the reported day are still listed, which only that
+        # day's data does, so it is saved under the reported date as usual.
+        dated_csv = csv_path_for(symbol, asof)
+
     # series-search carries no date, so cross-check it against saved history.
     previous = latest_saved_before(symbol, asof)
     if previous and read_csv_rows(previous[1]) == all_rows and not args.allow_stale:
@@ -667,7 +682,11 @@ def run(args) -> int:
               f"the {previous[0]:%a %Y-%m-%d} data. Not refreshed yet; try again later.")
         return EXIT_NOT_PUBLISHED
     conflict = dated_csv.exists() and read_csv_rows(dated_csv) != all_rows
-    if not verified:
+    if asof != reported:
+        asof_line = (f"{asof:%a %Y-%m-%d} close (posted after the close; "
+                     + (f"the OCC's report date still says {reported:%a %Y-%m-%d})" if verified
+                        else "OCC date endpoint unavailable)"))
+    elif not verified:
         asof_line = (f"{asof:%a %Y-%m-%d} close, UNVERIFIED (OCC date endpoint unavailable; "
                      f"assumed previous trading day)")
     else:

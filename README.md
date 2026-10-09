@@ -93,8 +93,11 @@ GitHub Actions (`.github/workflows/daily.yml`) runs the pull on GitHub's
 servers every 15 minutes on weekday mornings (about 8:00 to 10:00 Eastern).
 The first run that finds a new day commits its CSV to `data/` and republishes
 both pages; the rest change nothing. It does not depend on this Mac.
-GitHub starts scheduled runs late at busy times and occasionally skips one,
-which is why it tries repeatedly instead of at one exact time.
+GitHub starts scheduled runs late at busy times and often skips them, so
+Claude routines on the owner's account also start the workflow on weekdays:
+in the evening, when the day's numbers usually appear (they were out by 21:06
+Eastern on 2026-10-08), and at 8:15 and 9:25 in the morning, before the open.
+The page can therefore show a day's close the same evening.
 
 To run it on demand: the repository's Actions tab, "Daily open interest",
 "Run workflow".
@@ -116,10 +119,16 @@ To run it on demand: the repository's Actions tab, "Daily open interest",
 Because series-search carries no date, the script cross-checks it against saved
 history: if the OCC's date has moved on but the series data is identical to the
 previous saved day, it treats the data as not refreshed yet.
-The reverse also happens: after the close, series-search can switch to the day's
-new numbers while the OCC's date still names the previous session. So on a
-trading day, from 16:00 Eastern until the OCC dates that day, a run saves
-nothing and exits `75`; the next morning's run saves it.
+The reverse happens in the evening: the OCC posts the day's numbers to
+series-search hours before its date moves on (that catches up by morning). So
+after the close a run compares series-search with the file saved for the date
+the OCC reports. Unchanged means the day's numbers aren't out yet (exit `75`);
+changed means they are, and they are saved under that day's date, with "posted
+after the close" on the page. If the reported day was never saved, a run saves
+it only while that day's own expiring options are still listed, which only its
+data does; otherwise it saves nothing and exits `75`. The next morning's run
+checks the day again against the OCC's dated data and replaces it if the OCC
+revised it.
 
 ## Schedule (macOS)
 
