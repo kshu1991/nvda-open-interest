@@ -635,6 +635,14 @@ def run(args) -> int:
               f"(latest available: {asof:%a %Y-%m-%d}). Try again later, or pass "
               f"--allow-stale to see the older data.")
         return EXIT_NOT_PUBLISHED
+    # After the close, series-search can switch to the day's new numbers while the report
+    # date still names the previous session (seen at 21:06 ET on 2026-10-08), so until the
+    # date reaches today the data cannot be dated and must not be saved under `asof`.
+    if after_close and asof < today and not args.allow_stale:
+        print(f"After the close, series-search may already hold {today:%a %Y-%m-%d} open "
+              f"interest while the OCC still dates its data {asof:%a %Y-%m-%d}. Try again "
+              f"once the OCC dates it, or tomorrow morning; pass --allow-stale to see it anyway.")
+        return EXIT_NOT_PUBLISHED
 
     dated_csv = csv_path_for(symbol, asof)
     if args.if_new and verified and dated_csv.exists():

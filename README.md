@@ -86,9 +86,9 @@ the new day.
 
 ### On a phone, or anywhere
 
-https://kshu1991.github.io/nvda-open-interest/ is the same dashboard, hosted
+https://kshu231.github.io/nvda-open-interest/ is the same dashboard, hosted
 by GitHub Pages, and
-https://kshu1991.github.io/nvda-open-interest/history_NVDA.html the history.
+https://kshu231.github.io/nvda-open-interest/history_NVDA.html the history.
 GitHub Actions (`.github/workflows/daily.yml`) runs the pull on GitHub's
 servers every 15 minutes on weekday mornings (about 8:00 to 10:00 Eastern).
 The first run that finds a new day commits its CSV to `data/` and republishes
@@ -116,6 +116,10 @@ To run it on demand: the repository's Actions tab, "Daily open interest",
 Because series-search carries no date, the script cross-checks it against saved
 history: if the OCC's date has moved on but the series data is identical to the
 previous saved day, it treats the data as not refreshed yet.
+The reverse also happens: after the close, series-search can switch to the day's
+new numbers while the OCC's date still names the previous session. So on a
+trading day, from 16:00 Eastern until the OCC dates that day, a run saves
+nothing and exits `75`; the next morning's run saves it.
 
 ## Schedule (macOS)
 
